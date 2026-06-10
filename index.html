@@ -163,9 +163,12 @@ function initFirebase(){
     db = firebase.database();
     db.ref('.info/connected').on('value',s=>setSync(!!s.val()));
     db.ref('cartoSecto').on('value',snap=>{
-      if(_saving) return;
+      if(_saving || save._warned) return;   // pas d'écrasement si écriture en cours ou refusée
       const d = snap.val();
       if(!d) return;
+      const remote = JSON.stringify({o:d.overrides||{}, z:d.zoneDays||{}});
+      const local  = JSON.stringify({o:overrides, z:zoneDays});
+      if(remote===local) return;
       overrides = d.overrides||{}; zoneDays = d.zoneDays||{};
       localStorage.setItem(LSKEY, JSON.stringify({overrides, zoneDays}));
       buildZoneList(); buildDayList(); updateBadge(); refreshMap();
@@ -179,7 +182,17 @@ function save(){
     _saving=true;
     db.ref('cartoSecto').set({overrides, zoneDays, maj:new Date().toISOString()})
       .then(()=>setTimeout(()=>_saving=false,800))
-      .catch(()=>{_saving=false; setSync(false);});
+      .catch(err=>{
+        _saving=false;
+        const b=document.getElementById('syncBadge');
+        b.textContent='⚠ écriture refusée — règles Firebase';
+        b.style.color='#ff6b6b';
+        console.error('Firebase write:',err);
+        if(!save._warned){
+          save._warned=true;
+          alert("Firebase refuse l'écriture sur le nœud 'cartoSecto'.\n\nVa dans la console Firebase → Realtime Database → Règles et ajoute :\n\"cartoSecto\": { \".read\": true, \".write\": true }\n\nEn attendant, tes modifs restent enregistrées sur CE navigateur (localStorage) et via Export 💾.");
+        }
+      });
   }
 }
 function zoneOf(insee){ return overrides[insee] || BASE[insee][2]; }
