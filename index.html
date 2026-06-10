@@ -6,6 +6,8 @@
 <title>Carte sectorielle — PTFE Orléans St Jean</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 <style>
 :root{
   --bg:#12151c; --panel:#1a1f2a; --panel2:#222837; --border:#2e3648;
@@ -80,7 +82,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 <div id="sidebar">
   <header>
     <h1>Analyse sectorielle <span>Orléans</span></h1>
-    <div class="sub">PTFE 916164 — colorisation par code INSEE · <span id="modifBadge"></span></div>
+    <div class="sub">PTFE 916164 — colorisation par code INSEE · <span id="modifBadge"></span> <span id="syncBadge" style="color:#5a6378">⬤ hors ligne</span></div>
   </header>
   <div class="tabs">
     <button id="tabZones" class="active">Par zone</button>
@@ -137,6 +139,10 @@ DAYCOLORS[NODAY]='#5a6378';
 const DEPTS = {'03':'03-allier','18':'18-cher','28':'28-eure-et-loir','36':'36-indre','41':'41-loir-et-cher','45':'45-loiret'};
 const LSKEY = 'carteSecto_v2';
 
+// ---- Firebase (sync temps réel partagée) ----
+const firebaseConfig={apiKey:"AIzaSyDnjxRbAzDJPMUcvoNsB5hoHQnMTP7lZb4",authDomain:"belote-us-seignelay.firebaseapp.com",databaseURL:"https://belote-us-seignelay-default-rtdb.europe-west1.firebasedatabase.app",projectId:"belote-us-seignelay",storageBucket:"belote-us-seignelay.firebasestorage.app",messagingSenderId:"881100486907",appId:"1:881100486907:web:a04a29dd9683ad8fa9d85e"};
+let db=null, firebaseOk=false, _saving=false;
+
 // ---- état persistant : réaffectations + jours par zone ----
 let overrides = {};               // insee -> nouvelle zone
 let zoneDays = {};                // zone -> [jours]
@@ -144,7 +150,38 @@ try{
   const s = JSON.parse(localStorage.getItem(LSKEY)||'{}');
   overrides = s.overrides||{}; zoneDays = s.zoneDays||{};
 }catch(e){}
-function save(){ localStorage.setItem(LSKEY, JSON.stringify({overrides, zoneDays})); updateBadge(); }
+
+function setSync(ok){
+  const b=document.getElementById('syncBadge');
+  firebaseOk=ok;
+  b.textContent = ok?'⬤ synchronisé':'⬤ hors ligne';
+  b.style.color = ok?'#34d399':'#5a6378';
+}
+function initFirebase(){
+  try{
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    db.ref('.info/connected').on('value',s=>setSync(!!s.val()));
+    db.ref('cartoSecto').on('value',snap=>{
+      if(_saving) return;
+      const d = snap.val();
+      if(!d) return;
+      overrides = d.overrides||{}; zoneDays = d.zoneDays||{};
+      localStorage.setItem(LSKEY, JSON.stringify({overrides, zoneDays}));
+      buildZoneList(); buildDayList(); updateBadge(); refreshMap();
+    });
+  }catch(e){ setSync(false); }
+}
+function save(){
+  localStorage.setItem(LSKEY, JSON.stringify({overrides, zoneDays}));
+  updateBadge();
+  if(db){
+    _saving=true;
+    db.ref('cartoSecto').set({overrides, zoneDays, maj:new Date().toISOString()})
+      .then(()=>setTimeout(()=>_saving=false,800))
+      .catch(()=>{_saving=false; setSync(false);});
+  }
+}
 function zoneOf(insee){ return overrides[insee] || BASE[insee][2]; }
 function daysOf(insee){ const d = zoneDays[zoneOf(insee)]||[]; return d.length?d:[NODAY]; }
 
@@ -380,6 +417,7 @@ document.getElementById('search').addEventListener('keydown',e=>{
 document.getElementById('toggleSidebar').onclick=()=>document.getElementById('sidebar').classList.toggle('open');
 
 buildZoneList(); buildDayList(); updateBadge();
+initFirebase();
 init();
 </script>
 </body>
