@@ -126,6 +126,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
       <option value="fade">estompées</option>
       <option value="hide">masquées</option>
     </select>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;margin-left:auto">
+      <input type="checkbox" id="chkLabels" checked style="accent-color:var(--accent)"> Noms des villes
+    </label>
   </div>
   <input id="search" type="text" placeholder="Commune, code INSEE ou code postal… (Entrée)">
   <div class="list" id="zoneList"></div>
@@ -227,7 +230,15 @@ function ensureChecks(){ Object.keys(allZones()).forEach(z=>{ if(!(z in zChecked
 ensureChecks();
 
 const map = L.map('map').setView([47.4,2.1],8);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO',maxZoom:18}).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO',maxZoom:18}).addTo(map);
+// libellés des villes rendus AU-DESSUS des polygones colorés
+map.createPane('labels');
+map.getPane('labels').style.zIndex=650;
+map.getPane('labels').style.pointerEvents='none';
+const labelLayer=L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',{pane:'labels',maxZoom:18}).addTo(map);
+document.getElementById('chkLabels').addEventListener('change',e=>{
+  if(e.target.checked) labelLayer.addTo(map); else map.removeLayer(labelLayer);
+});
 const layersByInsee = {};
 const geoGroup = L.featureGroup().addTo(map);
 
@@ -238,9 +249,7 @@ function isVisible(insee){
   return daysOf(insee).some(d=>dChecked[d]);
 }
 function colorFor(insee){
-  if(viewMode==='zone') return zoneColor(zoneOf(insee));
-  const ds=daysOf(insee).filter(d=>dChecked[d]);
-  return DAYCOLORS[ds[0]||daysOf(insee)[0]];
+  return zoneColor(zoneOf(insee));   // même couleur de zone dans les deux vues
 }
 function styleFor(insee){
   if(isVisible(insee)) return {color:'#0d1017',weight:.8,fillColor:colorFor(insee),fillOpacity:.78,opacity:1};
@@ -371,8 +380,9 @@ function buildDayList(){
     const zlist=Object.keys(allZones()).filter(z=>isN?!(zoneDays[z]||[]).length:(zoneDays[z]||[]).includes(d));
     const div=document.createElement('div');
     div.className='zone-item'+(dChecked[d]?'':' off');
+    const sw=Object.keys(allZones()).filter(z=>isN?!(zoneDays[z]||[]).length:(zoneDays[z]||[]).includes(d)).slice(0,5).map(z=>`<span class="swatch" style="background:${zoneColor(z)};width:10px;height:10px"></span>`).join('');
     div.innerHTML=`<input type="checkbox" ${dChecked[d]?'checked':''}>
-      <span class="swatch" style="background:${DAYCOLORS[d]}"></span>
+      <span style="display:flex;gap:2px;flex-shrink:0;min-width:14px">${sw||'<span class="swatch" style="background:transparent;border-color:transparent"></span>'}</span>
       <span class="zone-info"><div class="zone-name">${isN?'Non planifié':({Lun:'Lundi',Mar:'Mardi',Mer:'Mercredi',Jeu:'Jeudi',Ven:'Vendredi',Sam:'Samedi',Dim:'Dimanche'})[d]}</div>
       <div class="zone-code">${zlist.length?zlist.join(', '):'aucune zone'}</div></span>
       <span class="zone-stats">${counts[d].n} com.<br>${counts[d].vol.toLocaleString('fr-FR')}</span>`;
