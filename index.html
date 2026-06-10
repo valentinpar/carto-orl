@@ -79,6 +79,29 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .pop select{margin-top:8px;width:100%;background:var(--panel2);color:var(--txt);border:1px solid var(--border);border-radius:5px;padding:4px;font-size:11px}
 .pop .lbl{font-size:10px;color:var(--muted);margin-top:8px;display:block}
 .leaflet-container{font-family:inherit}
+#histOverlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:3000;display:none;align-items:center;justify-content:center}
+#histOverlay.on{display:flex}
+#histPanel{background:var(--panel);border:1px solid var(--border);border-radius:10px;width:min(560px,92vw);max-height:82vh;display:flex;flex-direction:column}
+#histPanel header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+#histPanel header h2{font-size:14px}
+#histPanel header .x{cursor:pointer;color:var(--muted);font-size:18px;padding:0 4px}
+#histPanel header .x:hover{color:var(--txt)}
+#histBody{overflow-y:auto;padding:10px 14px;flex:1}
+#histBody h3{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px}
+.hist-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px}
+.hist-row:hover{background:var(--panel2)}
+.hist-row .swatch{width:11px;height:11px}
+.hist-row .info{flex:1;min-width:0}
+.hist-row .info small{color:var(--muted);font-size:10px;display:block}
+.hist-row .del{cursor:pointer;color:var(--muted);font-size:14px;padding:2px 5px;flex-shrink:0}
+.hist-row .del:hover{color:#ff6b6b}
+.hist-empty{font-size:12px;color:var(--muted);padding:6px 8px;font-style:italic}
+#histFooter{padding:10px 14px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+#histFooter button{background:var(--panel2);color:#ff6b6b;border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer}
+#histFooter button:hover{border-color:#ff6b6b}
+#histFooter span{font-size:11px;color:var(--muted)}
+body:not(.edit) .editonly{display:none !important}
+#btnLock.unlocked{background:#1d2b1f;border-color:#34d399;color:#34d399}
 #toggleSidebar{display:none}
 @media(max-width:760px){
   #sidebar{position:absolute;left:0;top:0;bottom:0;transform:translateX(-100%);transition:.25s}
@@ -98,11 +121,13 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
     <button id="tabJours">Par jour</button>
   </div>
   <div id="editBtnRow">
-    <button id="btnPaint">🖌 Réaffecter</button>
-    <button id="btnNewZone">➕ Zone</button>
+    <button id="btnLock" title="Mode édition (mot de passe)">🔒 Consultation</button>
+    <button id="btnPaint" class="editonly">🖌 Réaffecter</button>
+    <button id="btnNewZone" class="editonly">➕ Zone</button>
     <button id="btnExport">💾</button>
-    <button id="btnImport">📂</button>
-    <button id="btnReset" title="Annuler toutes les réaffectations">↺</button>
+    <button id="btnImport" class="editonly">📂</button>
+    <button id="btnReset" title="Historique des modifications">🕘</button>
+    <button id="btnMdp" class="editonly" title="Changer le mot de passe">🔑</button>
   </div>
   <div id="newZoneForm">
     <input type="text" id="nzLib" placeholder="Nom de la zone (ex : CHATEAUROUX SUD)">
@@ -138,6 +163,13 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 <button id="toggleSidebar">☰ Menu</button>
 <div id="map"></div>
 <div id="loading"><div class="spin"></div><p id="loadMsg">Chargement des contours communaux…</p></div>
+<div id="histOverlay">
+  <div id="histPanel">
+    <header><h2>🕘 Historique des modifications</h2><span class="x" id="histClose">✕</span></header>
+    <div id="histBody"></div>
+    <div id="histFooter"><span id="histCount"></span><button id="histResetAll" class="editonly">Tout annuler</button></div>
+  </div>
+</div>
 <input type="file" id="fileImport" accept=".json" style="display:none">
 
 <script>
@@ -165,12 +197,16 @@ const firebaseConfig={apiKey:"AIzaSyDnjxRbAzDJPMUcvoNsB5hoHQnMTP7lZb4",authDomai
 let db=null, firebaseOk=false, _saving=false;
 
 // ---- état partagé ----
+let mdp = 'PTFE45';               // mot de passe édition (modifiable via 🔑, stocké dans Firebase)
+let editMode = sessionStorage.getItem('cartoSectoEdit')==='1';
+function isEdit(){ return editMode; }
 let overrides = {};               // insee -> zone
 let zoneDays = {};                // zone -> [jours]
 let customZones = {};             // code -> {lib, color}
+let overridesMeta = {};           // insee -> date ISO de la réaffectation
 try{
   const s = JSON.parse(localStorage.getItem(LSKEY)||'{}');
-  overrides=s.overrides||{}; zoneDays=s.zoneDays||{}; customZones=s.customZones||{};
+  overrides=s.overrides||{}; zoneDays=s.zoneDays||{}; customZones=s.customZones||{}; overridesMeta=s.overridesMeta||{};
 }catch(e){}
 
 // helpers zones (base + personnalisées)
@@ -195,21 +231,23 @@ function initFirebase(){
       if(_saving || save._failed) return;
       const d = snap.val();
       if(!d) return;
+      if(d.mdp) mdp=d.mdp;
       const remote = JSON.stringify({o:d.overrides||{}, z:d.zoneDays||{}, c:d.customZones||{}});
       const local  = JSON.stringify({o:overrides, z:zoneDays, c:customZones});
       if(remote===local) return;
-      overrides=d.overrides||{}; zoneDays=d.zoneDays||{}; customZones=d.customZones||{};
-      localStorage.setItem(LSKEY, JSON.stringify({overrides, zoneDays, customZones}));
+      overrides=d.overrides||{}; zoneDays=d.zoneDays||{}; customZones=d.customZones||{}; overridesMeta=d.overridesMeta||{};
+      if(d.mdp) mdp=d.mdp;
+      localStorage.setItem(LSKEY, JSON.stringify({overrides, zoneDays, customZones, overridesMeta}));
       ensureChecks(); buildZoneList(); buildDayList(); buildPaintSel(); updateBadge(); refreshMap();
     });
   }catch(e){ setSync(false); }
 }
 function save(){
-  localStorage.setItem(LSKEY, JSON.stringify({overrides, zoneDays, customZones}));
+  localStorage.setItem(LSKEY, JSON.stringify({overrides, zoneDays, customZones, overridesMeta}));
   updateBadge();
   if(db){
     _saving=true;
-    db.ref('cartoSecto').set({overrides, zoneDays, customZones, maj:new Date().toISOString()})
+    db.ref('cartoSecto').set({overrides, zoneDays, customZones, overridesMeta, mdp, maj:new Date().toISOString()})
       .then(()=>{ setTimeout(()=>_saving=false,800); save._failed=false; setSync(true); })
       .catch(err=>{
         _saving=false; save._failed=true;
@@ -272,11 +310,13 @@ function popupHtml(insee){
     <tr><td>Jour(s)</td><td>${days}</td></tr>
   </table>
   <span class="zbadge" style="background:${c}22;color:${c};border:1px solid ${c}66">${z} · ${zoneLib(z)}${overrides[insee]?' (modifié, origine '+orig+')':''}</span>
-  <label class="lbl">Réaffecter à la zone :</label>
-  <select onchange="reassign('${insee}',this.value)">${opts}</select></div>`;
+  ${isEdit()?`<label class="lbl">Réaffecter à la zone :</label>
+  <select onchange="reassign('${insee}',this.value)">${opts}</select>`:''}</div>`;
 }
 window.reassign=function(insee,z){
-  if(z===BASE[insee][2]) delete overrides[insee]; else overrides[insee]=z;
+  if(!isEdit()) return;
+  if(z===BASE[insee][2]){ delete overrides[insee]; delete overridesMeta[insee]; }
+  else{ overrides[insee]=z; overridesMeta[insee]=new Date().toISOString(); }
   save(); buildZoneList(); refreshMap();
   if(layersByInsee[insee]&&layersByInsee[insee].isPopupOpen()) layersByInsee[insee].setPopupContent(popupHtml(insee));
 };
@@ -307,7 +347,7 @@ async function init(){
       const lyr=L.geoJSON(f,{style:()=>styleFor(insee)});
       lyr.bindPopup(()=>popupHtml(insee));
       lyr.on('click',e=>{
-        if(paintMode){ L.DomEvent.stop(e); lyr.closePopup(); reassign(insee, document.getElementById('paintTarget').value); }
+        if(paintMode&&isEdit()){ L.DomEvent.stop(e); lyr.closePopup(); reassign(insee, document.getElementById('paintTarget').value); }
       });
       lyr.on('mouseover',()=>{ if(isVisible(insee)) lyr.setStyle({weight:2.2,color:'#fff'}); });
       lyr.on('mouseout',()=>lyr.setStyle(styleFor(insee)));
@@ -339,16 +379,17 @@ function buildZoneList(){
     const isCustom=!!customZones[z]; const isZna=(z===ZNA);
     const div=document.createElement('div');
     div.className='zone-item'+(zChecked[z]?'':' off');
-    const chips=isZna?'':DAYS.map(d=>`<span data-day="${d}" class="${(zoneDays[z]||[]).includes(d)?'on':''}">${d}</span>`).join('');
+    const chips=isZna?'':DAYS.map(d=>`<span data-day="${d}" class="${(zoneDays[z]||[]).includes(d)?'on':''}" ${isEdit()?'':'style="pointer-events:none;opacity:.55"'}>${d}</span>`).join('');
     div.innerHTML=`<input type="checkbox" ${zChecked[z]?'checked':''}>
       <span class="swatch" style="background:${zoneColor(z)}"></span>
       <span class="zone-info"><div class="zone-name">${lib}</div><div class="zone-code">${isZna?'communes sans secteur':z+(isCustom?' · perso':'')}</div></span>
       <span class="zone-stats">${counts[z].n} com.<br>${counts[z].vol.toLocaleString('fr-FR')}</span>
-      ${isCustom&&!isZna?'<span class="zone-del" title="Supprimer cette zone">✕</span>':''}
+      ${isCustom&&!isZna&&isEdit()?'<span class="zone-del" title="Supprimer cette zone">✕</span>':''}
       <div class="daychips">${chips}</div>`;
     div.querySelector('input').addEventListener('change',e=>{ zChecked[z]=e.target.checked; div.classList.toggle('off',!zChecked[z]); refreshMap(); });
     div.querySelectorAll('.daychips span').forEach(sp=>{
       sp.addEventListener('click',()=>{
+        if(!isEdit()) return;
         const d=sp.dataset.day; zoneDays[z]=zoneDays[z]||[];
         const ix=zoneDays[z].indexOf(d);
         if(ix>=0) zoneDays[z].splice(ix,1); else zoneDays[z].push(d);
@@ -358,9 +399,10 @@ function buildZoneList(){
     });
     const del=div.querySelector('.zone-del');
     if(del) del.addEventListener('click',()=>{
+      if(!isEdit()) return;
       const nb=counts[z].n;
       if(!confirm(`Supprimer la zone ${z} — ${lib} ?`+(nb?`\n${nb} commune(s) retourneront à leur zone d'origine.`:''))) return;
-      Object.keys(overrides).forEach(i=>{ if(overrides[i]===z) delete overrides[i]; });
+      Object.keys(overrides).forEach(i=>{ if(overrides[i]===z){ delete overrides[i]; delete overridesMeta[i]; } });
       delete customZones[z]; delete zoneDays[z]; delete zChecked[z];
       save(); buildZoneList(); buildDayList(); buildPaintSel(); refreshMap();
     });
@@ -431,6 +473,7 @@ document.getElementById('btnNewZone').onclick=()=>{
   document.getElementById('nzLib').focus();
 };
 document.getElementById('nzCreate').onclick=()=>{
+  if(!isEdit()) return;
   const lib=document.getElementById('nzLib').value.trim().toUpperCase();
   if(!lib){ document.getElementById('nzLib').focus(); return; }
   const code=nextZoneCode();
@@ -444,6 +487,38 @@ document.getElementById('nzCreate').onclick=()=>{
   if(!paintMode) document.getElementById('btnPaint').click();
 };
 
+// ---- mode édition / consultation ----
+function applyEditUI(){
+  document.body.classList.toggle('edit', editMode);
+  const b=document.getElementById('btnLock');
+  b.textContent = editMode ? '🔓 Édition' : '🔒 Consultation';
+  b.classList.toggle('unlocked', editMode);
+  if(!editMode && paintMode) document.getElementById('btnPaint').click();
+}
+document.getElementById('btnLock').onclick=()=>{
+  if(editMode){
+    editMode=false; sessionStorage.removeItem('cartoSectoEdit');
+    applyEditUI(); buildZoneList(); renderHist&&0;
+    return;
+  }
+  const p=prompt('Mot de passe organisateur :');
+  if(p===null) return;
+  if(p===mdp){
+    editMode=true; sessionStorage.setItem('cartoSectoEdit','1');
+    applyEditUI(); buildZoneList();
+  }else{
+    alert('Mot de passe incorrect');
+  }
+};
+document.getElementById('btnMdp').onclick=()=>{
+  if(!isEdit()) return;
+  const p1=prompt('Nouveau mot de passe :');
+  if(!p1) return;
+  const p2=prompt('Confirme le nouveau mot de passe :');
+  if(p1!==p2){ alert('Les deux saisies ne correspondent pas.'); return; }
+  mdp=p1; save(); alert('Mot de passe modifié (synchronisé pour tous les organisateurs).');
+};
+
 // ---- pinceau ----
 function buildPaintSel(){
   const sel=document.getElementById('paintTarget');
@@ -452,6 +527,7 @@ function buildPaintSel(){
   if(cur && allZones()[cur]) sel.value=cur;
 }
 document.getElementById('btnPaint').onclick=()=>{
+  if(!isEdit()&&!paintMode) return;
   paintMode=!paintMode;
   document.getElementById('btnPaint').classList.toggle('active',paintMode);
   document.getElementById('paintBar').classList.toggle('on',paintMode);
@@ -461,7 +537,7 @@ document.getElementById('paintStop').onclick=()=>document.getElementById('btnPai
 
 // ---- export / import / reset ----
 document.getElementById('btnExport').onclick=()=>{
-  const payload={overrides, zoneDays, customZones, export:new Date().toISOString()};
+  const payload={overrides, zoneDays, customZones, overridesMeta, export:new Date().toISOString()};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='carte-secto-modifs.json'; a.click();
   if(Object.keys(overrides).length){
@@ -476,15 +552,91 @@ document.getElementById('fileImport').addEventListener('change',e=>{
   const f=e.target.files[0]; if(!f) return;
   const r=new FileReader();
   r.onload=()=>{ try{
+    if(!isEdit()) return;
     const p=JSON.parse(r.result);
-    overrides=p.overrides||{}; zoneDays=p.zoneDays||{}; customZones=p.customZones||{};
+    overrides=p.overrides||{}; zoneDays=p.zoneDays||{}; customZones=p.customZones||{}; overridesMeta=p.overridesMeta||{};
     save(); ensureChecks(); buildZoneList(); buildDayList(); buildPaintSel(); refreshMap();
   }catch(err){ alert('Fichier invalide'); } };
   r.readAsText(f); e.target.value='';
 });
+function fmtDate(iso){
+  if(!iso) return '';
+  try{ const d=new Date(iso); return d.toLocaleDateString('fr-FR')+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; }
+}
+function renderHist(){
+  const body=document.getElementById('histBody');
+  let html='';
+
+  // Réaffectations (plus récentes en premier)
+  const ovr=Object.entries(overrides).sort((a,b)=>(overridesMeta[b[0]]||'').localeCompare(overridesMeta[a[0]]||''));
+  html+='<h3>Réaffectations de communes ('+ovr.length+')</h3>';
+  if(!ovr.length) html+='<div class="hist-empty">Aucune réaffectation</div>';
+  ovr.forEach(([i,z])=>{
+    const orig=BASE[i]?BASE[i][2]:'?';
+    const nom=BASE[i]?BASE[i][0]:i;
+    html+=`<div class="hist-row">
+      <span class="swatch" style="background:${zoneColor(z)}"></span>
+      <span class="info">${nom} <small>${i} · ${orig} (${zoneLib(orig)}) → ${z} (${zoneLib(z)})${overridesMeta[i]?' · '+fmtDate(overridesMeta[i]):''}</small></span>
+      ${isEdit()?`<span class="del" title="Annuler cette réaffectation" onclick="histDelOverride('${i}')">🗑</span>`:''}</div>`;
+  });
+
+  // Zones personnalisées
+  const cz=Object.entries(customZones);
+  html+='<h3>Zones personnalisées ('+cz.length+')</h3>';
+  if(!cz.length) html+='<div class="hist-empty">Aucune zone personnalisée</div>';
+  cz.forEach(([c,z])=>{
+    const nb=Object.values(overrides).filter(v=>v===c).length;
+    html+=`<div class="hist-row">
+      <span class="swatch" style="background:${z.color}"></span>
+      <span class="info">${z.lib} <small>${c} · ${nb} commune(s) affectée(s)</small></span>
+      ${isEdit()?`<span class="del" title="Supprimer cette zone (les communes retournent à leur origine)" onclick="histDelZone('${c}')">🗑</span>`:''}</div>`;
+  });
+
+  // Jours de passage
+  const jd=Object.entries(zoneDays).filter(([,v])=>v&&v.length);
+  html+='<h3>Jours de passage ('+jd.length+' zone(s) planifiée(s))</h3>';
+  if(!jd.length) html+='<div class="hist-empty">Aucun jour défini</div>';
+  jd.forEach(([z,days])=>{
+    html+=`<div class="hist-row">
+      <span class="swatch" style="background:${zoneColor(z)}"></span>
+      <span class="info">${zoneLib(z)} <small>${z} · ${days.join(' · ')}</small></span>
+      ${isEdit()?`<span class="del" title="Effacer les jours de cette zone" onclick="histDelDays('${z}')">🗑</span>`:''}</div>`;
+  });
+
+  body.innerHTML=html;
+  document.getElementById('histCount').textContent=ovr.length+cz.length+jd.length+' modification(s) au total';
+}
+window.histDelOverride=function(i){
+  if(!isEdit()) return;
+  delete overrides[i]; delete overridesMeta[i];
+  save(); buildZoneList(); refreshMap(); renderHist();
+};
+window.histDelZone=function(c){
+  if(!isEdit()) return;
+  const nb=Object.values(overrides).filter(v=>v===c).length;
+  if(!confirm('Supprimer la zone '+c+' — '+zoneLib(c)+' ?'+(nb?'\n'+nb+' commune(s) retourneront à leur zone d\'origine.':''))) return;
+  Object.keys(overrides).forEach(i=>{ if(overrides[i]===c){ delete overrides[i]; delete overridesMeta[i]; } });
+  delete customZones[c]; delete zoneDays[c]; delete zChecked[c];
+  save(); buildZoneList(); buildDayList(); buildPaintSel(); refreshMap(); renderHist();
+};
+window.histDelDays=function(z){
+  if(!isEdit()) return;
+  delete zoneDays[z];
+  save(); buildZoneList(); buildDayList(); refreshMap(); renderHist();
+};
 document.getElementById('btnReset').onclick=()=>{
-  if(!confirm('Annuler toutes les réaffectations de zones ? (zones perso et jours conservés)')) return;
-  overrides={}; save(); buildZoneList(); refreshMap();
+  renderHist();
+  document.getElementById('histOverlay').classList.add('on');
+};
+document.getElementById('histClose').onclick=()=>document.getElementById('histOverlay').classList.remove('on');
+document.getElementById('histOverlay').addEventListener('click',e=>{
+  if(e.target.id==='histOverlay') document.getElementById('histOverlay').classList.remove('on');
+});
+document.getElementById('histResetAll').onclick=()=>{
+  if(!isEdit()){ alert('Passe en mode édition (🔒) pour modifier.'); return; }
+  if(!confirm('Tout annuler : réaffectations, zones personnalisées et jours de passage ?')) return;
+  overrides={}; overridesMeta={}; customZones={}; zoneDays={};
+  save(); buildZoneList(); buildDayList(); buildPaintSel(); refreshMap(); renderHist();
 };
 
 // ---- recherche : commune, INSEE ou code postal ----
@@ -519,6 +671,7 @@ document.getElementById('search').addEventListener('keydown',e=>{
 });
 document.getElementById('toggleSidebar').onclick=()=>document.getElementById('sidebar').classList.toggle('open');
 
+applyEditUI();
 buildZoneList(); buildDayList(); buildPaintSel(); updateBadge();
 initFirebase();
 init();
