@@ -283,15 +283,26 @@ map.getPane('labels').style.zIndex=650;
 map.getPane('labels').style.pointerEvents='none';
 const labelLayer=L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',{pane:'labels',maxZoom:18}).addTo(map);
 
-// Couche routes : OpenStreetMap standard, rendue dans un pane dédié entre polygones et libellés
-map.createPane('roads');
-map.getPane('roads').style.zIndex=500;   // au-dessus des polygones (400) sous les labels (650)
-map.getPane('roads').style.pointerEvents='none';
-map.getPane('roads').style.opacity='0';
-const roadLayer=L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',{pane:'roads',maxZoom:18,attribution:'&copy; OpenStreetMap contributors, HOT'});
+// Couche routes : OSM standard rendue SOUS le fond sombre
+// Quand activée : fond sombre devient transparent, polygones semi-transparents → routes visibles dessous
+map.createPane('baseRoads');
+map.getPane('baseRoads').style.zIndex=100;  // sous le fond normal (200)
+map.getPane('baseRoads').style.pointerEvents='none';
+const roadLayer=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  pane:'baseRoads', maxZoom:19, opacity:0,
+  attribution:'&copy; OpenStreetMap contributors'
+});
 roadLayer.addTo(map);
+
+// on garde une référence au fond sombre (premier tile layer)
+let darkBase=null;
+map.eachLayer(l=>{ if(l instanceof L.TileLayer && !darkBase && l!==roadLayer) darkBase=l; });
+
 document.getElementById('chkRoads').addEventListener('change',e=>{
-  map.getPane('roads').style.opacity = e.target.checked ? '1' : '0';
+  const on=e.target.checked;
+  roadLayer.setOpacity(on ? 1 : 0);
+  if(darkBase) darkBase.setOpacity(on ? 0 : 1);
+  refreshMap();
 });
 document.getElementById('chkLabels').addEventListener('change',e=>{
   if(e.target.checked) labelLayer.addTo(map); else map.removeLayer(labelLayer);
@@ -308,10 +319,12 @@ function isVisible(insee){
 function colorFor(insee){
   return zoneColor(zoneOf(insee));   // même couleur de zone dans les deux vues
 }
+function roadsOn(){ return document.getElementById('chkRoads')&&document.getElementById('chkRoads').checked; }
 function styleFor(insee){
-  if(isVisible(insee)) return {color:'#0d1017',weight:.8,fillColor:colorFor(insee),fillOpacity:.78,opacity:1};
+  const ro=roadsOn();
+  if(isVisible(insee)) return {color:'#0d1017',weight:.8,fillColor:colorFor(insee),fillOpacity:ro?.43:.78,opacity:1};
   if(hideMode==='hide') return {opacity:0,fillOpacity:0};
-  return {color:'#0d1017',weight:.5,fillColor:'#3a4254',fillOpacity:.25,opacity:1};
+  return {color:'#0d1017',weight:.5,fillColor:'#3a4254',fillOpacity:ro?.12:.25,opacity:1};
 }
 function refreshMap(){ Object.keys(layersByInsee).forEach(i=>layersByInsee[i].setStyle(styleFor(i))); updateStats(); }
 
@@ -368,9 +381,9 @@ async function init(){
       lyr.on('click',e=>{
         if(paintMode&&isEdit()){ L.DomEvent.stop(e); lyr.closePopup(); reassign(insee, document.getElementById('paintTarget').value); }
       });
-      lyr.on('mouseover',()=>{ if(isVisible(insee)) lyr.setStyle({weight:2.2,color:'#fff'}); });
+      lyr.on('mouseover',()=>{ if(isVisible(insee)) lyr.setStyle({weight:2.2,color:'#fff',fillOpacity:roadsOn()?.43:.78}); });
       lyr.on('mouseout',()=>lyr.setStyle(styleFor(insee)));
-      layersByInsee[insee]=lyr; geoGroup.addLayer(lyr);
+      lyr._insee=insee; layersByInsee[insee]=lyr; geoGroup.addLayer(lyr);
     }));
     map.fitBounds(geoGroup.getBounds().pad(0.02));
     document.getElementById('loading').remove();
