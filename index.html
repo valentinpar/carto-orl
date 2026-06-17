@@ -155,7 +155,10 @@ body:not(.edit) .editonly{display:none !important}
       <option value="hide">masquées</option>
     </select>
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;margin-left:auto">
-      <input type="checkbox" id="chkLabels" checked style="accent-color:var(--accent)"> Noms des villes
+      <input type="checkbox" id="chkLabels" checked style="accent-color:var(--accent)"> Villes
+    </label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+      <input type="checkbox" id="chkRoads" style="accent-color:var(--accent)"> Routes
     </label>
   </div>
   <input id="search" type="text" placeholder="Commune, code INSEE ou code postal… (Entrée)">
@@ -279,6 +282,17 @@ map.createPane('labels');
 map.getPane('labels').style.zIndex=650;
 map.getPane('labels').style.pointerEvents='none';
 const labelLayer=L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',{pane:'labels',maxZoom:18}).addTo(map);
+
+// Couche routes : OpenStreetMap standard, rendue dans un pane dédié entre polygones et libellés
+map.createPane('roads');
+map.getPane('roads').style.zIndex=500;   // au-dessus des polygones (400) sous les labels (650)
+map.getPane('roads').style.pointerEvents='none';
+map.getPane('roads').style.opacity='0';
+const roadLayer=L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',{pane:'roads',maxZoom:18,attribution:'&copy; OpenStreetMap contributors, HOT'});
+roadLayer.addTo(map);
+document.getElementById('chkRoads').addEventListener('change',e=>{
+  map.getPane('roads').style.opacity = e.target.checked ? '1' : '0';
+});
 document.getElementById('chkLabels').addEventListener('change',e=>{
   if(e.target.checked) labelLayer.addTo(map); else map.removeLayer(labelLayer);
 });
