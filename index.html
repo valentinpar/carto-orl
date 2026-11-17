@@ -276,12 +276,24 @@ function ensureChecks(){ Object.keys(allZones()).forEach(z=>{ if(!(z in zChecked
 ensureChecks();
 
 const map = L.map('map').setView(CFG.center,8);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO',maxZoom:18}).addTo(map);
+// ---- Fond de carte ----
+// CARTO exige désormais une clé API gratuite (carto.com/basemaps/apikey).
+// Colle ta clé ci-dessous. Si elle est vide, on utilise un fond Esri sans clé.
+const CARTO_KEY='';
+const KEY_Q = CARTO_KEY ? '?key='+CARTO_KEY : '';
+const BASE_URL = CARTO_KEY
+  ? 'https://basemaps.cartocdn.com/rastertiles/dark_nolabels/{z}/{x}/{y}{r}.png'+KEY_Q
+  : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
+const LABELS_URL = CARTO_KEY
+  ? 'https://basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png'+KEY_Q
+  : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
+const BASE_MAXZ = CARTO_KEY ? 18 : 16;
+L.tileLayer(BASE_URL,{attribution:'&copy; OpenStreetMap &copy; '+(CARTO_KEY?'CARTO':'Esri'),maxZoom:BASE_MAXZ,maxNativeZoom:BASE_MAXZ}).addTo(map);
 // libellés des villes rendus AU-DESSUS des polygones colorés
 map.createPane('labels');
 map.getPane('labels').style.zIndex=650;
 map.getPane('labels').style.pointerEvents='none';
-const labelLayer=L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',{pane:'labels',maxZoom:18}).addTo(map);
+const labelLayer=L.tileLayer(LABELS_URL,{pane:'labels',maxZoom:18,maxNativeZoom:BASE_MAXZ}).addTo(map);
 
 // Couche routes : OSM standard rendue SOUS le fond sombre
 // Quand activée : fond sombre devient transparent, polygones semi-transparents → routes visibles dessous
