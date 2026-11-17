@@ -156,7 +156,16 @@ const dChecked = {}; DAYS.concat([NODAY]).forEach(d=>dChecked[d]=true);
 let paintMode = false;
 
 const map = L.map('map').setView([47.4,2.1],8);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO',maxZoom:18}).addTo(map);
+// ---- Fond de carte ----
+// CARTO exige désormais une clé API gratuite (carto.com/basemaps/apikey).
+// Colle ta clé ci-dessous. Si elle est vide, on utilise un fond Esri sans clé.
+const CARTO_KEY='';
+if(CARTO_KEY){
+  L.tileLayer('https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png?key='+CARTO_KEY,{attribution:'&copy; OpenStreetMap &copy; CARTO',maxZoom:18}).addTo(map);
+}else{
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',{attribution:'&copy; OpenStreetMap &copy; Esri',maxZoom:18,maxNativeZoom:16}).addTo(map);
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',{maxZoom:18,maxNativeZoom:16}).addTo(map);
+}
 
 const layersByInsee = {};
 const geoGroup = L.featureGroup().addTo(map);
